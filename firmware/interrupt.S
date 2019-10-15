@@ -9,68 +9,75 @@
 .extern buttonsLive
 .extern millis
 .extern lastSwitchedTime
+;~ .extern ST_CD32
+#define ST_CD32 4
 
+; Register holding button status to be shifted out
 #define BTNREG _SFR_IO_ADDR (GPIOR0)
 
+; Called on PIN_PADMODE changing, shall set things up, sample buttons and shift
+; out first bit on FALLING edges, only store timestamp on RISING edges
 INT0_vect:
+	; Save context
 	push r24
 	in r24, _SFR_IO_ADDR (SREG)
 	push r24
 	
-	sbic    _SFR_IO_ADDR(PIND), PD2			; if pin 2 == LOW
-	rjmp    padmode_rising
+	sbic _SFR_IO_ADDR (PIND), PD2			; if pin 2 == LOW
+	rjmp padmode_rising
 	
-	lds     r24, state
-	cpi     r24, 0x04						; if state == ST_CD32
-	breq    output_next_button
-	sbi     _SFR_IO_ADDR(DDRB), PB0			; PB0 = OUTPUT (Arduino pin 8, PIN_BTNREGOUT, PIN_BTN2)
-	cbi     _SFR_IO_ADDR(DDRD), PD3			; PD3 = INPUT (Arduino pin 3, PIN_BTNREGCLK, PIN_BTN1)
-	cbi     _SFR_IO_ADDR(PORTD), PD3		; No pull-up (?)
+	; If not yet in ST_CD32, set pin directions
+	lds r24, state
+	cpi r24, ST_CD32
+	breq output_next_button					; Already ST_CD32, skip
+	sbi _SFR_IO_ADDR (DDRB), PB0			; PB0 = OUTPUT (Arduino pin 8, PIN_BTNREGOUT, PIN_BTN2)
+	cbi _SFR_IO_ADDR (DDRD), PD3			; PD3 = INPUT (Arduino pin 3, PIN_BTNREGCLK, PIN_BTN1)
+	cbi _SFR_IO_ADDR (PORTD), PD3			; No pull-up (?)
 
-	; Old attachInterrupt() code
+	; Enable INT1, i.e. interrupt on clock edges
 	;~ cli
-	;~ lds     r24, 0x0069     ; 0x800069 <__TEXT_REGION_LENGTH__+0x7e0069>
-	;~ ori     r24, 0x0C       ; 12
-	;~ sts     0x0069, r24     ; 0x800069 <__TEXT_REGION_LENGTH__+0x7e0069>
-	;~ sbi     0x1d, 1 ; 29
+	sbi	_SFR_IO_ADDR (EIMSK), INT1
 	;~ sei
 	
-	ldi     r24, 0x04
-	sts     state, r24			; state = 4 (ST_CD32);
+	; Set state to ST_CD32
+	ldi r24, ST_CD32
+	sts state, r24
 
 output_next_button:
-	lds     r24, buttonsLive
-	sbrs    r24, 0
-	rjmp    sr_out_hi
-	sbi     _SFR_IO_ADDR(PORTB), PB0		; SR OUTPUT = HIGH
-	rjmp    shift_button_reg
+	lds r24, buttonsLive					; Sample input values which will be shifted out on subsequent clock inputs
+	sbrs r24, 0
+	rjmp sr_out_lo							; If LSB is 0, jump
+	sbi _SFR_IO_ADDR (PORTB), PB0			; SR OUTPUT = HIGH
+	rjmp shift_button_reg
 
-sr_out_hi:
-	cbi     _SFR_IO_ADDR(PORTB), PB0		; SR OUTPUT = LOW
-	;~ lds     r24, buttonsLive     ; 0x800106 <buttonsLive>
-	;~ ldi     r25, 0x00       ; 0
-	;~ asr     r25
-	;~ ror     r24
+sr_out_lo:
+	cbi _SFR_IO_ADDR (PORTB), PB0			; SR OUTPUT = LOW
 	
 shift_button_reg:
-	lsr r24				; buttonsLive still untouched in r24, >> 1
-	out     BTNREG, r24       				; BTNREG = buttonsLive >> 1
-	rjmp v0end
+	lsr r24									; buttonsLive still untouched in r24, >> 1
+	out BTNREG, r24       					; BTNREG = buttonsLive >> 1
+	rjmp int0_end
 
 padmode_rising:
+	; Disable INT1
+	;~ cli
+	cbi	     _SFR_IO_ADDR (EIMSK), INT1
+	;~ sei
+	
 	push r22
 	push r23
 	push r25
-	call    millis
-	sts     lastSwitchedTime, r22     ; 0x800239 <lastSwitchedTime>
-	sts     lastSwitchedTime + 1, r23     ; 0x80023a <lastSwitchedTime+0x1>
-	sts     lastSwitchedTime + 2, r24     ; 0x80023b <lastSwitchedTime+0x2>
-	sts     lastSwitchedTime + 3, r25     ; 0x80023c <lastSwitchedTime+0x3>
+	call millis
+	sts lastSwitchedTime, r22
+	sts lastSwitchedTime + 1, r23
+	sts lastSwitchedTime + 2, r24
+	sts lastSwitchedTime + 3, r25
 	pop r25
 	pop r23
 	pop r22
 
-v0end:
+int0_end:
+	; Restore context
 	pop r24
 	out _SFR_IO_ADDR (SREG), r24
 	pop r24
@@ -78,22 +85,30 @@ v0end:
 	reti
 
 
+
+
+; Called on clock pin rising, shall shift out next bit
 INT1_vect:
 	; Save context
 	push r24
 	in r24, _SFR_IO_ADDR (SREG)
 	push r24
 	
-	in      r24, BTNREG        ; 42
-	sbrs    r24, 0
-	rjmp    .+4             ; 0x144 <_Z11onClockEdgev+0xa>
-	sbi     0x05, 0 ; 5
-	rjmp    .+2             ; 0x146 <_Z11onClockEdgev+0xc>
-	cbi     0x05, 0 ; 5
-	lsr r24				; buttonsLive still untouched in r24
-	out     BTNREG, r24       ; 42
+	; BTNREG = buttonsLive >> 1
+	; MSB will be zeroed during shifting, this will report non-existing button 9
+	; as pressed for the ID sequence.
+	in r24, BTNREG
+	lsr r24									; LSB is loaded into carry flag
+	out BTNREG, r24
 
+	brcc int1_sr_out_lo						; If carry is not set (i.e. LSB was 0), jump
+	sbi _SFR_IO_ADDR (PORTB), PB0			; SR OUTPUT = HIGH
+	rjmp int1_end
 	
+int1_sr_out_lo:
+	cbi _SFR_IO_ADDR (PORTB), PB0			; SR OUTPUT = LOW
+
+int1_end:
 	; Restore context
 	pop r24
 	out _SFR_IO_ADDR (SREG), r24

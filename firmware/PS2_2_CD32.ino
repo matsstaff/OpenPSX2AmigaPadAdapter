@@ -536,24 +536,15 @@ void dumpButtons (Buttons psxButtons) {
 inline void enableCD32Trigger () {
 	noInterrupts ();
 	
-	/* Avoid any pending interrupts, see
+	/* Clear any pending interrupts, see
 	 * https://github.com/arduino/ArduinoCore-avr/issues/244
 	 */
 	EIFR |= (1 << INTF1) | (1 << INTF0);
 
-	/* Enable interrupts: we can't use attachInterrupt() here, since our ISR is
-	 * going to be bare
-	 */
-	EICRA |= (1 << ISC00);    // Trigger interrupt on CHANGE
-	EIMSK |= (1 << INT0);     // Enable interrupt 0 (i.e.: on pin 2)
-
-	EICRA |= (1 << ISC11) | (1 << ISC10);    // Trigger interrupt on RISING
-	EIMSK |= (1 << INT1);     // Enable interrupt 1 (i.e.: on pin 3)
+	// Enable interrupt 0 (i.e.: on pin 2)
+	EIMSK |= (1 << INT0);
 	
-	interrupts ();            // Enable all interrupts, probably redundant
-
-	// Call ISR on changes of the CD32 pad mode pin
-	//~ attachInterrupt (digitalPinToInterrupt (PIN_PADMODE), onPadModeChange, CHANGE);
+	interrupts ();
 }
 
 /** \brief Disable CD32 controller support
@@ -562,7 +553,7 @@ inline void enableCD32Trigger () {
  * been called.
  */
 inline void disableCD32Trigger () {
-	//~ detachInterrupt (digitalPinToInterrupt (PIN_PADMODE));
+	EIMSK &= ~(1 << INT0);
 }
 
 /** \brief Clear controller configurations
@@ -639,10 +630,6 @@ void setup () {
 	dstart (115200);
 	debugln (F("Starting up..."));
 
-	pinMode (PIN_PADMODE, INPUT_PULLUP);
-	//~ pinMode (PIN_BTNREGOUT, OUTPUT);
-	//~ pinMode (PIN_BTNREGCLK, INPUT);
-
 	// Prepare leds
 	pinMode (PIN_LED_PAD_OK, OUTPUT);
 	pinMode (PIN_LED_MODE, OUTPUT);
@@ -653,6 +640,24 @@ void setup () {
 	// This will also initialize the configurations if EEPROM is invalid
 	loadConfigurations ();
 
+	/* Prepare interrupts: we can't use attachInterrupt() here, since our ISRs
+	 * are going to be "bare"
+	 * 
+	 * INT0 is triggered by pin 2, i.e. PIN_PADMODE, so it must be triggered on
+	 * CHANGE.
+	 */
+	EICRA |= (1 << ISC00);
+	EICRA &= ~(1 << ISC01);		// Probably redundant
+
+	/* INT1 is triggered by pin 3, i.e. PIN_BTNREGCLK/PIN_BTN1, and we want that
+	 * triggered by RISING edges. Actually we should care about falling edges,
+	 * but since it will take us some time to react to the interrupt, we start
+	 * in advance ;).
+	 */
+	EICRA |= (1 << ISC11) | (1 << ISC10);
+
+	// Get ready to switch to CD32 mode
+	pinMode (PIN_PADMODE, INPUT_PULLUP);
 	enableCD32Trigger ();
 	
 	// Start polling for controller
