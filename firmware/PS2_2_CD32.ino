@@ -38,7 +38,7 @@
 #include <util/crc16.h>
 #include <PS2X_lib.h>
 
-#define ENABLE_FAST_IO
+//~ #define ENABLE_FAST_IO
 
 #ifdef ENABLE_FAST_IO
 #include "DigitalIO.h"		// https://github.com/greiman/DigitalIO
@@ -695,27 +695,6 @@ void toJoystick () {
 	//~ detachInterrupt (digitalPinToInterrupt (PIN_BTNREGCLK));
 
 	state = ST_JOYSTICK;
-}
-
-void toCD32 () {
-	debugln (F("To CD32 mode"));
-		
-	// Pin 9 becomes our data output
-	fastPinMode (PIN_BTNREGOUT, OUTPUT);
-	
-	// Pin 6 becomes an input for clock
-	fastPinMode (PIN_BTNREGCLK, INPUT);
-	//~ attachInterrupt (digitalPinToInterrupt (PIN_BTNREGCLK), onClockEdge, RISING);
-
-	/* Enable interrupts: we can't use attachInterrupt() here, since our ISR is
-	 * going to be bare
-	 */
-	//~ noInterrupts ();
-	//~ EICRA |= (1 << ISC11) | (1 << ISC10);    // Trigger interrupt on RISING
-	//~ EIMSK |= (1 << INT1);     // Enable interrupt 1 (i.e.: on pin 3)
-	//~ interrupts ();            // Enable all interrupts, probably redundant
-
-	state = ST_CD32;
 }
 
 inline void buttonPress (byte pin) {
@@ -1637,10 +1616,11 @@ void updateLeds () {
 void loop () {
 	stateMachine ();
 	updateLeds ();
-
 	if (lastSwitchedTime > 0 && millis () - lastSwitchedTime > TIMEOUT_CD32_MODE) {
 		// Pad Mode pin has been high for a while, disable CD32 mode
 		toJoystick ();
+		cli ();
 		lastSwitchedTime = 0;
+		sei ();
 	}
 }
