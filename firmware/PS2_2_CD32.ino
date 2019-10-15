@@ -38,6 +38,16 @@
 #include <util/crc16.h>
 #include <PS2X_lib.h>
 
+#define ENABLE_FAST_IO
+
+#ifdef ENABLE_FAST_IO
+#include "DigitalIO.h"		// https://github.com/greiman/DigitalIO
+#else
+#define fastDigitalRead(x) digitalRead(x)
+#define fastDigitalWrite(x, y) digitalWrite(x, y)
+#define fastPinMode(x, y) pinMode(x, y)
+#endif
+
 //~ #define ENABLE_FACTORY_RESET
 
 // INPUT pins, connected to PS2 controller
@@ -164,7 +174,7 @@ const unsigned long DEBOUNCE_TIME_COMBO = 150;
  * 
  * Possible states for the internal state machine that drives the whole thing.
  */
-enum State {
+enum __attribute__((packed)) State {
 	ST_NO_CONTROLLER,			//!< No controller connected
 	ST_FIRST_READ,				//!< First time the controller is read
 	
@@ -212,7 +222,7 @@ const word BTN_START =		1U << 6U;	//!< \a Start/Pause Button
 //! @}
 
 // This is only used for blinking the led when mapping is changed
-enum JoyButtonMapping {
+enum __attribute__((packed)) yJoyButtonMapping {
 	JMAP_NORMAL = 1,
 	JMAP_RACING1,
 	JMAP_RACING2,
@@ -298,7 +308,7 @@ byte buttonsLive = 0x80;
  * 
  * 0 means pressed, etc.
  */
-volatile byte buttons;
+//~ volatile byte *isrButtons = &GPIOR1;
 
 //! Timestamp of last time the pad was switched out of CD32 mode
 unsigned long lastSwitchedTime = 0;
@@ -475,39 +485,48 @@ void dumpButtons (Buttons psxButtons) {
 }
 
 // ISR
-void onPadModeChange () {
-	if (digitalRead (PIN_PADMODE) == LOW) {
-		if (state != ST_CD32) {
-			// Switch to CD32 mode
-			toCD32 ();
-		}
+//~ void onPadModeChange () {
+	//~ if (fastDigitalRead (PIN_PADMODE) == LOW) {
+		//~ if (state != ST_CD32) {
+			//~ // Switch to CD32 mode
+			//~ toCD32 ();
+		//~ }
 		
-		// Sample input values, they will be shifted out on subsequent clock inputs
-		//~ buttons = buttonsLive | 0x80;   // Make sure bit MSB is 1 for ID sequence
-		buttons = buttonsLive;		/* The above is now handled elsewhere so that
-									 * here we can run as fast as possible
-									 */
+		//~ // Output first bit immediately
+		//~ if (buttonsLive & 0x01) {
+			//~ fastDigitalWrite (PIN_BTNREGOUT, HIGH);
+		//~ } else {
+			//~ fastDigitalWrite (PIN_BTNREGOUT, LOW);
+		//~ }
+		
+		//~ // Sample input values which will be shifted out on subsequent clock inputs
+		//buttons = buttonsLive | 0x80;   // Make sure bit MSB is 1 for ID sequence
+		//~ *isrButtons = buttonsLive >> 1;	/* The above is now handled elsewhere so that
+									     //~ * here we can run as fast as possible
+										 //~ */
 
-		// Output first bit immediately
-		digitalWrite (PIN_BTNREGOUT, buttons & 0x01);
-		buttons >>= 1;	/* MSB will be zeroed during shifting, this will report
-						 * non-existing button 9 as pressed for the ID sequence
-						 */
-	} else {
-		/* Mark time pin went high so that we can see if it goes back high in a
-		 * short while
-		 */
-		lastSwitchedTime = millis ();
-	}
-}
+		//buttons >>= 1;	/* MSB will be zeroed during shifting, this will report
+		//				 * non-existing button 9 as pressed for the ID sequence
+		//				 */
+	//~ } else {
+		//~ /* Mark time pin went high so that we can see if it goes back high in a
+		 //~ * short while
+		 //~ */
+		//~ lastSwitchedTime = millis ();
+	//~ }
+//~ }
 
 // ISR
-void onClockEdge () {
-	digitalWrite (PIN_BTNREGOUT, buttons & 0x01);
-	buttons >>= 1;	/* Again, non-existing button 10 will be reported as pressed
-	                 * for the ID sequence
-	                 */
-}
+//~ void onClockEdge () {
+	//~ if (*isrButtons & 0x01) {
+		//~ fastDigitalWrite (PIN_BTNREGOUT, HIGH);
+	//~ } else {
+		//~ fastDigitalWrite (PIN_BTNREGOUT, LOW);
+	//~ }
+	//~ *isrButtons >>= 1;	/* Again, non-existing button 10 will be reported as pressed
+	                     //~ * for the ID sequence
+	                     //~ */
+//~ }
 
 /** \brief Enable CD32 controller support
  * 
@@ -515,13 +534,26 @@ void onClockEdge () {
  * #PIN_PADMODE, after this function has been called.
  */
 inline void enableCD32Trigger () {
+	noInterrupts ();
+	
 	/* Avoid any pending interrupts, see
 	 * https://github.com/arduino/ArduinoCore-avr/issues/244
 	 */
 	EIFR |= (1 << INTF1) | (1 << INTF0);
 
+	/* Enable interrupts: we can't use attachInterrupt() here, since our ISR is
+	 * going to be bare
+	 */
+	EICRA |= (1 << ISC00);    // Trigger interrupt on CHANGE
+	EIMSK |= (1 << INT0);     // Enable interrupt 0 (i.e.: on pin 2)
+
+	EICRA |= (1 << ISC11) | (1 << ISC10);    // Trigger interrupt on RISING
+	EIMSK |= (1 << INT1);     // Enable interrupt 1 (i.e.: on pin 3)
+	
+	interrupts ();            // Enable all interrupts, probably redundant
+
 	// Call ISR on changes of the CD32 pad mode pin
-	attachInterrupt (digitalPinToInterrupt (PIN_PADMODE), onPadModeChange, CHANGE);
+	//~ attachInterrupt (digitalPinToInterrupt (PIN_PADMODE), onPadModeChange, CHANGE);
 }
 
 /** \brief Disable CD32 controller support
@@ -529,8 +561,8 @@ inline void enableCD32Trigger () {
  * CD32 mode will no longer be entered automatically, after this function has
  * been called.
  */
-inline void disbleCD32Trigger () {
-	detachInterrupt (digitalPinToInterrupt (PIN_PADMODE));
+inline void disableCD32Trigger () {
+	//~ detachInterrupt (digitalPinToInterrupt (PIN_PADMODE));
 }
 
 /** \brief Clear controller configurations
@@ -637,7 +669,7 @@ void toMouse () {
 	pinMode (PIN_RIGHT, OUTPUT);
 
 	// We're not going to care for clock pulses anymore
-	detachInterrupt (digitalPinToInterrupt (PIN_BTNREGCLK));
+	//~ detachInterrupt (digitalPinToInterrupt (PIN_BTNREGCLK));
 	
 	state = ST_MOUSE;
 }
@@ -655,7 +687,7 @@ void toJoystick () {
 	digitalWrite (PIN_RIGHT, LOW);
 	pinMode (PIN_RIGHT, INPUT);
 	
-	detachInterrupt (digitalPinToInterrupt (PIN_BTNREGCLK));
+	//~ detachInterrupt (digitalPinToInterrupt (PIN_BTNREGCLK));
 
 	state = ST_JOYSTICK;
 }
@@ -664,11 +696,19 @@ void toCD32 () {
 	debugln (F("To CD32 mode"));
 		
 	// Pin 9 becomes our data output
-	pinMode (PIN_BTNREGOUT, OUTPUT);
+	fastPinMode (PIN_BTNREGOUT, OUTPUT);
 	
 	// Pin 6 becomes an input for clock
-	pinMode (PIN_BTNREGCLK, INPUT);
-	attachInterrupt (digitalPinToInterrupt (PIN_BTNREGCLK), onClockEdge, RISING);
+	fastPinMode (PIN_BTNREGCLK, INPUT);
+	//~ attachInterrupt (digitalPinToInterrupt (PIN_BTNREGCLK), onClockEdge, RISING);
+
+	/* Enable interrupts: we can't use attachInterrupt() here, since our ISR is
+	 * going to be bare
+	 */
+	//~ noInterrupts ();
+	//~ EICRA |= (1 << ISC11) | (1 << ISC10);    // Trigger interrupt on RISING
+	//~ EIMSK |= (1 << INT1);     // Enable interrupt 1 (i.e.: on pin 3)
+	//~ interrupts ();            // Enable all interrupts, probably redundant
 
 	state = ST_CD32;
 }
