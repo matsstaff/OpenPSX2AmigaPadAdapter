@@ -68,24 +68,21 @@ INT0_vect:
 	
 padmode_falling:
 	; Entering ST_CD32
-	push r24
-	
+
 	; Output status of first button as soon as possible
 	sbi _SFR_IO_ADDR (DDRB), PB0			; PB0 = OUTPUT (Arduino pin 8, PIN_BTNREGOUT, PIN_BTN2)
-	in r24, BTNLIVE							; Sample input values which will be shifted out on subsequent clock inputs
-	sbrs r24, 0
-	;~ sbis BTNLIVE, 0
+	sbis BTNLIVE, 0
 	cbi _SFR_IO_ADDR (PORTB), PB0			; SR OUTPUT = LOW
-	sbrc r24, 0
-	;~ sbic BTNLIVE, 0
+	sbic BTNLIVE, 0
 	sbi _SFR_IO_ADDR (PORTB), PB0			; SR OUTPUT = HIGH
 
 	; Now on to completing mode switching stuff. No registers nor SREG have been
 	; altered so far, but now we need to save the context
-	;~ push r24
+	push r24
 	in r24, _SFR_IO_ADDR (SREG)
 	push r24
 
+	; Sample input values which will be shifted out on subsequent clock inputs
 	; BTNREG = BTNLIVE >> 1
 	; MSB will be zeroed during shifting, this will report non-existing button 8
 	; as pressed for the ID sequence
