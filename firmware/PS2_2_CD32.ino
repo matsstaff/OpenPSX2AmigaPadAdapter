@@ -38,7 +38,7 @@
 #include <util/crc16.h>
 #include <PS2X_lib.h>
 
-//~ #define ENABLE_FACTORY_RESET
+#define ENABLE_FACTORY_RESET
 
 // INPUT pins, connected to PS2 controller
 const byte PS2_CLK = 13;
@@ -894,7 +894,7 @@ boolean rightAnalogMoved (int8_t& x, int8_t& y) {
 	return ret;
 }
 
-void handleJoystick () {
+void handleJoystickCommon () {
 	// Call button mapping function
 	TwoButtonJoystick j = {false, false, false, false, false, false};
 	//~ if (!joyMappingFunc)
@@ -936,6 +936,47 @@ void handleJoystick () {
 		buttonRelease (PIN_RIGHT);
 	}
 
+	/* Map buttons, working on a temporary variable to avoid the sampling
+	 * interrupt to happen while we are filling in button statuses and catch a
+	 * value that has not yet been fully populated.
+	 *
+	 * Note that 0 means pressed and that MSB must be 1 for the ID
+	 * sequence.
+	 */
+	byte buttonsTmp = 0xFF;
+
+	if (ps2x.Button (PSB_START))
+		buttonsTmp &= ~BTN_START;
+
+	if (ps2x.Button (PSB_TRIANGLE))
+		buttonsTmp &= ~BTN_GREEN;
+
+	if (ps2x.Button (PSB_SQUARE))
+		buttonsTmp &= ~BTN_RED;
+
+	if (ps2x.Button (PSB_CROSS))
+		buttonsTmp &= ~BTN_BLUE;
+
+	if (ps2x.Button (PSB_CIRCLE))
+		buttonsTmp &= ~BTN_YELLOW;
+
+	if (ps2x.Button (PSB_L1) || ps2x.Button (PSB_L2) || ps2x.Button (PSB_L3))
+		buttonsTmp &= ~BTN_FRONT_L;
+
+	if (ps2x.Button (PSB_R1) || ps2x.Button (PSB_R2) || ps2x.Button (PSB_R3))
+		buttonsTmp &= ~BTN_FRONT_R;
+
+	// Atomic operation, interrupt either happens before or after this
+	*buttonsLive = buttonsTmp;
+}
+
+void handleJoystick () {
+	// Call button mapping function
+	TwoButtonJoystick j = {false, false, false, false, false, false};
+	//~ if (!joyMappingFunc)
+		//~ joyMappingFunc = mapJoystickNormal;			
+	joyMappingFunc (j);
+	
 	/* If the interrupt that switches us to CD32 mode is
 	 * triggered while we are here we might end up setting pin states after
 	 * we should have relinquished control of the pins, so let's avoid this
@@ -1042,70 +1083,39 @@ void handleMouse () {
 	interrupts ();
 }
 
-void handleCD32Pad () {
-	// Directions still behave as in normal joystick mode, so abuse those functions
-	TwoButtonJoystick analog;
-	mapAnalogStickHorizontal (analog);
-	mapAnalogStickVertical (analog);
+//~ void handleCD32Pad () {
+	//~ // Directions still behave as in normal joystick mode, so abuse those functions
+	//~ TwoButtonJoystick analog;
+	//~ mapAnalogStickHorizontal (analog);
+	//~ mapAnalogStickVertical (analog);
 
-	// D-Pad is fully functional as well, keep it in mind
-	if (analog.up || ps2x.Button (PSB_PAD_UP)) {
-		buttonPress (PIN_UP);
-	} else {
-		buttonRelease (PIN_UP);
-	}
+	//~ // D-Pad is fully functional as well, keep it in mind
+	//~ if (analog.up || ps2x.Button (PSB_PAD_UP)) {
+		//~ buttonPress (PIN_UP);
+	//~ } else {
+		//~ buttonRelease (PIN_UP);
+	//~ }
 
-	if (analog.down || ps2x.Button (PSB_PAD_DOWN)) {
-		buttonPress (PIN_DOWN);
-	} else {
-		buttonRelease (PIN_DOWN);
-	}
+	//~ if (analog.down || ps2x.Button (PSB_PAD_DOWN)) {
+		//~ buttonPress (PIN_DOWN);
+	//~ } else {
+		//~ buttonRelease (PIN_DOWN);
+	//~ }
 
-	if (analog.left || ps2x.Button (PSB_PAD_LEFT)) {
-		buttonPress (PIN_LEFT);
-	} else {
-		buttonRelease (PIN_LEFT);
-	}
+	//~ if (analog.left || ps2x.Button (PSB_PAD_LEFT)) {
+		//~ buttonPress (PIN_LEFT);
+	//~ } else {
+		//~ buttonRelease (PIN_LEFT);
+	//~ }
 
-	if (analog.right || ps2x.Button (PSB_PAD_RIGHT)) {
-		buttonPress (PIN_RIGHT);
-	} else {
-		buttonRelease (PIN_RIGHT);
-	}
+	//~ if (analog.right || ps2x.Button (PSB_PAD_RIGHT)) {
+		//~ buttonPress (PIN_RIGHT);
+	//~ } else {
+		//~ buttonRelease (PIN_RIGHT);
+	//~ }
 
-	/* Map buttons, working on a temporary variable to avoid the sampling
-	 * interrupt to happen while we are filling in button statuses and catch a
-	 * value that has not yet been fully populated.
-	 *
-	 * Note that 0 means pressed and that MSB must be 1 for the ID
-	 * sequence.
-	 */
-	byte buttonsTmp = 0xFF;
 
-	if (ps2x.Button (PSB_START))
-		buttonsTmp &= ~BTN_START;
-
-	if (ps2x.Button (PSB_TRIANGLE))
-		buttonsTmp &= ~BTN_GREEN;
-
-	if (ps2x.Button (PSB_SQUARE))
-		buttonsTmp &= ~BTN_RED;
-
-	if (ps2x.Button (PSB_CROSS))
-		buttonsTmp &= ~BTN_BLUE;
-
-	if (ps2x.Button (PSB_CIRCLE))
-		buttonsTmp &= ~BTN_YELLOW;
-
-	if (ps2x.Button (PSB_L1) || ps2x.Button (PSB_L2) || ps2x.Button (PSB_L3))
-		buttonsTmp &= ~BTN_FRONT_L;
-
-	if (ps2x.Button (PSB_R1) || ps2x.Button (PSB_R2) || ps2x.Button (PSB_R3))
-		buttonsTmp &= ~BTN_FRONT_R;
-
-	// Atomic operation, interrupt either happens before or after this
-	*buttonsLive = buttonsTmp;
-}
+//~ }
 
 /** \brief Debounce button/combo presses
  * 
@@ -1278,6 +1288,7 @@ void stateMachine () {
 				state = ST_SELECT_HELD;
 			} else {
 				// Handle normal joystick movements
+				handleJoystickCommon ();
 				handleJoystick ();
 			}
 			break;
@@ -1292,7 +1303,7 @@ void stateMachine () {
 			}
 			break;
 		case ST_CD32:
-			handleCD32Pad ();
+			handleJoystickCommon ();
 			break;
 				
 		/**********************************************************************

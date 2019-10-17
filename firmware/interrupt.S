@@ -92,7 +92,8 @@ padmode_falling:
 	
 	; Enable INT1, i.e. interrupt on clock edges
 	cbi _SFR_IO_ADDR (DDRD), PD3			; PD3 = INPUT (Arduino pin 3, PIN_BTNREGCLK, PIN_BTN1)
-	;~ cbi _SFR_IO_ADDR (PORTD), PD3		; No pull-up
+	sbi _SFR_IO_ADDR (PORTD), PD3			; Activate pull-up
+	sbi _SFR_IO_ADDR (EIFR), INTF1			; Clear any pending interrupts
 	sbi	_SFR_IO_ADDR (EIMSK), INT1
 	
 	; Set state to ST_CD32
@@ -111,11 +112,10 @@ padmode_rising:
 	; Set pin directions
 	cbi _SFR_IO_ADDR (DDRB), PB0			; PB0 = INPUT (Arduino pin 8, PIN_BTNREGOUT, PIN_BTN2)
 	cbi _SFR_IO_ADDR (PORTB), PB0			; No pull-up
-	; PD3 is already in input mode
+	; PD3 is already in input mode with pull-up
 	
 	; Disable INT1
 	cbi _SFR_IO_ADDR (EIMSK), INT1
-	sbi _SFR_IO_ADDR (EIFR), INTF1
 	
 	; Set state to ST_JOYSTICK
 	push r24
