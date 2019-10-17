@@ -172,6 +172,7 @@ enum __attribute__((packed)) State {
 	ST_JOYSTICK,				//!< Two-button joystick mode
 	ST_MOUSE,					//!< Mouse mode
 	ST_CD32,					//!< CD32-controller mode
+	ST_JOYSTICK_TEMP,			//!< Just come out of CD32 mode, will it last?
 	
 	// States to select mapping or go into programming mode
 	ST_SELECT_HELD,				//!< Select being held
@@ -1304,6 +1305,20 @@ void stateMachine () {
 			break;
 		case ST_CD32:
 			handleJoystickCommon ();
+			stateEnteredTime = 0;
+			break;
+		case ST_JOYSTICK_TEMP:
+			handleJoystickCommon ();
+			handleJoystick ();
+
+			if (stateEnteredTime == 0) {
+				// State was just entered
+				stateEnteredTime = millis ();
+			} else if (millis () - stateEnteredTime > TIMEOUT_CD32_MODE) {
+				// CD32 mode was exited once for all
+				stateEnteredTime = 0;
+				state = ST_JOYSTICK;
+			}
 			break;
 				
 		/**********************************************************************
@@ -1552,6 +1567,7 @@ void updateLeds () {
 			digitalWrite (PIN_LED_MODE, (millis () / 500) % 2 == 0);
 			break;
 		case ST_CD32:
+		case ST_JOYSTICK_TEMP:
 			// Led lit up steadily
 			digitalWrite (PIN_LED_MODE, HIGH);
 			break;

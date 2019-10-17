@@ -46,11 +46,10 @@
 .global INT1_vect
 
 .extern state
-;~ .extern millis
 
 ; These are taken from enum State
-#define ST_JOYSTICK 2
 #define ST_CD32 4
+#define ST_JOYSTICK_TEMP 5
 
 ; Register holding button status to be shifted out
 #define BTNREG _SFR_IO_ADDR (GPIOR1)
@@ -59,6 +58,9 @@
 ; sampled when PIN_PADMODE goes low
 ; Note that this is testable with SBIS/SBIC
 #define BTNLIVE _SFR_IO_ADDR (GPIOR0)
+
+#define BTN_BLUE 0
+#define BTN_RED 1
 
 ; Called on PIN_PADMODE changing, shall set things up, sample buttons and shift
 ; out first bit on FALLING edges, only store timestamp on RISING edges
@@ -110,16 +112,25 @@ padmode_rising:
 	; Switching back to ST_JOYSTICK
 	
 	; Set pin directions
+	sbis BTNLIVE, BTN_BLUE
+	sbi _SFR_IO_ADDR (DDRB), PB0			; PB0 = INPUT (Arduino pin 8, PIN_BTNREGOUT, PIN_BTN2)
+	sbic BTNLIVE, BTN_BLUE
 	cbi _SFR_IO_ADDR (DDRB), PB0			; PB0 = INPUT (Arduino pin 8, PIN_BTNREGOUT, PIN_BTN2)
 	cbi _SFR_IO_ADDR (PORTB), PB0			; No pull-up
-	; PD3 is already in input mode with pull-up
+	
+	; PD3 is already in input mode with pull-up, disable it
+	sbis BTNLIVE, BTN_RED
+	sbi _SFR_IO_ADDR (DDRD), PD3
+	sbic BTNLIVE, BTN_RED
+	cbi _SFR_IO_ADDR (DDRD), PD3
+	cbi _SFR_IO_ADDR (PORTD), PD3			; No pull-up
 	
 	; Disable INT1
 	cbi _SFR_IO_ADDR (EIMSK), INT1
 	
 	; Set state to ST_JOYSTICK
 	push r24
-	ldi r24, ST_JOYSTICK
+	ldi r24, ST_JOYSTICK_TEMP
 	sts state, r24
 	pop r24
 
