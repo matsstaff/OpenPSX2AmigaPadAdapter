@@ -111,11 +111,12 @@ padmode_falling:
 padmode_rising:
 	; Switching back to ST_JOYSTICK
 	
-	; Set pin directions
+	; Set pin directions and set levels according to buttons, as waiting for the
+	; main loop to do it takes too much time (= a few ms, for some reason)
 	sbis BTNLIVE, BTN_BLUE
-	sbi _SFR_IO_ADDR (DDRB), PB0			; PB0 = INPUT (Arduino pin 8, PIN_BTNREGOUT, PIN_BTN2)
+	sbi _SFR_IO_ADDR (DDRB), PB0			; PB0 = OUTPUT
 	sbic BTNLIVE, BTN_BLUE
-	cbi _SFR_IO_ADDR (DDRB), PB0			; PB0 = INPUT (Arduino pin 8, PIN_BTNREGOUT, PIN_BTN2)
+	cbi _SFR_IO_ADDR (DDRB), PB0			; PB0 = INPUT
 	cbi _SFR_IO_ADDR (PORTB), PB0			; No pull-up
 	
 	; PD3 is already in input mode with pull-up, disable it
