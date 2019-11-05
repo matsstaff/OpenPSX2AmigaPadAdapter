@@ -28,9 +28,9 @@
  */
 
 /**
- * \file OpenPSX2AmigaPadAdapter.ino
+ * \file psx.ino
  * \author SukkoPera <software@sukkology.net>
- * \date 05 Nov 2019
+ * \date 29 Oct 2019
  * \brief Playstation to Commodore Amiga/CD32 controller adapter
  */
 
@@ -49,7 +49,7 @@
 
 /** \brief Enable fast control of I/O pins
  *
- * This enables very fast (2 clock cycles) control of I/O pins. The DigitalIO
+ * This enabled very fast (2 clock cycles) control of I/O pins. The DigitalIO
  * library by greiman is needed for this: https://github.com/greiman/DigitalIO.
  * 
  * This is basically mandatory for all targets currently supported, where the
@@ -79,7 +79,7 @@
  * here is to save some flash, for ATmega88 targets. EEPROM can be cleared with
  * the \a eeprom_clear Arduino example.
  * 
- * At the moment we fit on all supported targets with this enabled, so just
+ * At the moment we fit on all supported targets with this enables, so just
  * ignore it.
  */
 //~ #define DISABLE_FACTORY_RESET
@@ -360,13 +360,32 @@ PS2X ps2x;
  */
 volatile State *state = reinterpret_cast<volatile State *> (&GPIOR2);
 
-/** \brief All possible controller configurations
- * 
- * Since these are activated with SELECT + a button, ideally there can be as
- * many different ones as other buttons we have (i.e.: #PSX_BUTTONS_NO). In
- * practice, we will start handling only a handful.
- */
-ControllerConfiguration controllerConfigs[PSX_BUTTONS_NO];
+//! \brief Program options that get stored in EEPROM
+struct EepromData {
+	/** \brief All possible controller configurations
+	 * 
+	 * Since these are activated with SELECT + a button, ideally there can be as
+	 * many different ones as other buttons we have (i.e.: #PSX_BUTTONS_NO). In
+	 * practice, we will start handling only a handful.
+	 */
+	ControllerConfiguration controllerConfigs[PSX_BUTTONS_NO];
+	
+	/** \brief Custom controller configuration currently selected (Button
+	 *         Number)
+	 */
+	byte currentCustomConfigNo;
+	
+	/** \brief Commodore 64 mode
+	 *
+	 * Button 2 on the C64 is usually expected to behave differently from the other
+	 * buttons, so that it is HIGH when pressed and LOW when released.
+	 *
+	 * If this flag is true, we'll do exactly that.
+	 */
+	boolean c64Mode;
+};
+
+EepromData configuration;
 
 //! \brief Custom controller configuration currently selected
 ControllerConfiguration *currentCustomConfig = NULL;
@@ -412,15 +431,6 @@ void mapJoystickNormal (TwoButtonJoystick& j);
 
 //! \brief Joystick mapping function currently in effect
 JoyMappingFunc joyMappingFunc = mapJoystickNormal;
-
-/** \brief Commodore 64 mode
- *
- * Button 2 on the C64 is usually expected to behave differently from the other
- * buttons, so that it is HIGH when pressed and LOW when released.
- *
- * If this flag is true, we'll do exactly that.
- */
-boolean c64Mode = false;
 
 //! @}		// End of global variables
 
@@ -824,28 +834,32 @@ inline void disableCD32Trigger () {
  * 
  * The programming function can then be used to map any button as desired.
  */
-void clearConfigurations () {
-	debugln (F("Clearing controllerConfigs"));
+void clearConfiguration () {
+	debugln (F("Clearing configuration"));
 	//~ memset (controllerConfigs, 0x00, sizeof (controllerConfigs));
 	for (byte i = 0; i < PSX_BUTTONS_NO; ++i) {
-		ControllerConfiguration& config = controllerConfigs[i];
+		ControllerConfiguration& config = configuration.controllerConfigs[i];
 		memset (&config, 0x00, sizeof (TwoButtonJoystick));
 		config.buttonMappings[psxButtonToIndex (PSB_SQUARE)].b1 = true;
 		config.buttonMappings[psxButtonToIndex (PSB_CROSS)].b2 = true;
 	}
+	
+	configuration.currentCustomConfigNo = NO_BUTTON;
+	
+	configuration.c64Mode = false;
 }
 
-/** \brief Calculate a CRC of controller configurations
+/** \brief Calculate a CRC of the program configuration
  * 
- * Used to validate the controller configurations after they have been loaded
- * from EEPROM.
+ * Used to validate the program configuration after it has been loaded from
+ * EEPROM.
  * 
  * \return The calculated CRC
  */
 uint16_t calculateConfigCrc () {
 	uint16_t crc = 0x4242;
-	uint8_t *data = (uint8_t *) controllerConfigs;
-	for (word i = 0; i < sizeof (controllerConfigs); ++i) {
+	uint8_t *data = (uint8_t *) configuration;
+	for (word i = 0; i < sizeof (configuration); ++i) {
 		crc = _crc16_update (crc, data[i]);
 	}
 	
@@ -858,13 +872,13 @@ uint16_t calculateConfigCrc () {
  * 
  * \return True if the loaded configurations are valid, false otherwise
  */
-boolean loadConfigurations () {
+boolean loadConfiguration () {
 	boolean ret = false;
 	
-	debug (F("Size of controllerConfigs is "));
-	debugln (sizeof (controllerConfigs));
+	debug (F("Size of EepromData is "));
+	debugln (sizeof (EepromData));
 	
-	EEPROM.get (4, controllerConfigs);
+	EEPROM.get (4, configuration);
 	
 	// Validation
 	uint16_t goodCrc;
@@ -875,17 +889,57 @@ boolean loadConfigurations () {
 		ret = true;
 	} else {
 		debugln (F("CRCs do not match"));
-		clearConfigurations ();
+		clearConfiguration ();
 	}
 	
 	return ret;
 }
 
+void applyConfiguration () {
+	switch (configuration.currentCustomConfigNo) {
+		case PSB_SQUARE:
+			debugln (F("Setting normal mapping"));
+			joyMappingFunc = mapJoystickNormal;
+			break;
+		case PSB_TRIANGLE:
+			debugln (F("Setting Racing1 mapping"));
+			joyMappingFunc = mapJoystickRacing1;
+			break;
+		case PSB_CIRCLE:
+			debugln (F("Setting Racing2 mapping"));
+			joyMappingFunc = mapJoystickRacing2;
+			break;
+		case PSB_CROSS:
+			debugln (F("Setting Platform mapping"));
+			joyMappingFunc = mapJoystickPlatform;
+			break;
+		case PSB_L1:
+		case PSB_R1:
+		case PSB_L2:
+		case PSB_R2: {
+			byte configIdx = psxButtonToIndex (configuration.currentCustomConfigNo);
+			if (configIdx < PSX_BUTTONS_NO) {
+				debug (F("Setting Custom mapping for controllerConfig "));
+				debugln (configIdx);
+				currentCustomConfig = &controllerConfigs[configIdx];
+				joyMappingFunc = mapJoystickCustom;
+			} else {
+				/* Something went wrong, just ignore it and pretend
+				 * nothing ever happened
+				 */
+			}
+			break;
+		} default:
+			// Do nothing
+			break;
+	}
+}
+
 //! \brief Save controller configurations to EEPROM
-void saveConfigurations () {
-	debugln (F("Saving controllerConfigs"));
+void saveConfiguration () {
+	debugln (F("Saving configuration"));
 	
-	EEPROM.put (4, controllerConfigs);
+	EEPROM.put (4, configuration);
 	
 	// CRC
 	uint16_t crc = calculateConfigCrc ();
@@ -900,10 +954,11 @@ void setup () {
 	fastPinMode (PIN_LED_PAD_OK, OUTPUT);
 	fastPinMode (PIN_LED_MODE, OUTPUT);
 
-	/* Load custom mappings from EEPROM, this will also initialize them if
+	/* Load program configuration from EEPROM, this will also initialize it if
 	 * EEPROM data is invalid
 	 */
-	loadConfigurations ();
+	loadConfiguration ();
+	applyConfiguration ();
 
 	/* This pin tells us when to toggle in/out of CD32 mode, and it will always
 	 * be an input
@@ -1468,7 +1523,7 @@ void handleJoystickButtons (const TwoButtonJoystick& j) {
 			buttonRelease (PIN_BTN1);
 		}
 
-		if (!c64Mode) {
+		if (!configuration.c64Mode) {
 			if (j.b2) {
 				buttonPress (PIN_BTN2);
 			} else {
@@ -1849,12 +1904,12 @@ void stateMachine () {
 				selectComboButton = PSB_R2;
 				*state = ST_SELECT_AND_BTN_HELD;
 			} else if (ps2x.Button (PSB_START)) {
-				if (c64Mode) {
+				if (configuration.c64Mode) {
 					flashLed (2);
 				} else {
 					flashLed (1);
 				}
-				c64Mode = !c64Mode;
+				configuration.c64Mode = !configuration.c64Mode;
 				*state = ST_WAIT_SELECT_RELEASE_FOR_EXIT;
 			}
 			break;
@@ -1918,6 +1973,7 @@ void stateMachine () {
 					// Shouldn't be reached
 					break;
 			}
+			configuration.currentCustomConfigNo = selectComboButton;
 			*state = ST_JOYSTICK;		// Exit immediately
 			break;
 		
@@ -1933,7 +1989,7 @@ void stateMachine () {
 			if (ps2x.Button (PSB_SELECT)) {
 				// Exit programming mode
 				debugln (F("Leaving programming mode"));
-				saveConfigurations ();	// No need to check for changes as this uses EEPROM.update()
+				saveConfiguration ();	// No need to check for changes as this uses EEPROM.update()
 				*state = ST_WAIT_SELECT_RELEASE_FOR_EXIT;
 			} else {
 				buttons = debounceButtons (DEBOUNCE_TIME_BUTTON);
@@ -1966,7 +2022,7 @@ void stateMachine () {
 					debug (F("Storing to controllerConfig "));
 					debugln (configIdx);
 					
-					ControllerConfiguration *config = &controllerConfigs[configIdx];
+					ControllerConfiguration *config = &configuration.controllerConfigs[configIdx];
 
 					// Then look up the mapping according to the programmed button
 					byte buttonIdx = psxButtonToIndex (programmedButton);
