@@ -373,7 +373,7 @@ struct EepromData {
 	/** \brief Custom controller configuration currently selected (Button
 	 *         Number)
 	 */
-	byte currentCustomConfigNo;
+	Buttons currentCustomConfigNo;
 	
 	/** \brief Commodore 64 mode
 	 *
@@ -858,7 +858,7 @@ void clearConfiguration () {
  */
 uint16_t calculateConfigCrc () {
 	uint16_t crc = 0x4242;
-	uint8_t *data = (uint8_t *) configuration;
+	uint8_t *data = (uint8_t *) &configuration;
 	for (word i = 0; i < sizeof (configuration); ++i) {
 		crc = _crc16_update (crc, data[i]);
 	}
@@ -921,7 +921,7 @@ void applyConfiguration () {
 			if (configIdx < PSX_BUTTONS_NO) {
 				debug (F("Setting Custom mapping for controllerConfig "));
 				debugln (configIdx);
-				currentCustomConfig = &controllerConfigs[configIdx];
+				currentCustomConfig = &configuration.controllerConfigs[configIdx];
 				joyMappingFunc = mapJoystickCustom;
 			} else {
 				/* Something went wrong, just ignore it and pretend
@@ -1960,7 +1960,7 @@ void stateMachine () {
 					if (configIdx < PSX_BUTTONS_NO) {
 						debug (F("Setting Custom mapping for controllerConfig "));
 						debugln (configIdx);
-						currentCustomConfig = &controllerConfigs[configIdx];
+						currentCustomConfig = &configuration.controllerConfigs[configIdx];
 						joyMappingFunc = mapJoystickCustom;
 						flashLed (JMAP_CUSTOM);
 					} else {
@@ -2075,8 +2075,8 @@ void stateMachine () {
 			break;
 		case ST_FACTORY_RESET_PERFORM:
 			// OK, user has convinced us to actually perform the reset
-			clearConfigurations ();
-			saveConfigurations ();
+			clearConfiguration ();
+			saveConfiguration ();
 			*state = ST_JOYSTICK;
 			break;
 #endif
