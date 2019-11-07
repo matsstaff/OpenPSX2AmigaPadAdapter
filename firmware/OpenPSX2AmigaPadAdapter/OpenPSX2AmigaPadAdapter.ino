@@ -360,7 +360,7 @@ PS2X ps2x;
  */
 volatile State *state = reinterpret_cast<volatile State *> (&GPIOR2);
 
-//! \brief Program options that get stored in EEPROM
+//! \brief Program configuration options that get stored in EEPROM
 struct EepromData {
 	/** \brief All possible controller configurations
 	 * 
@@ -385,6 +385,7 @@ struct EepromData {
 	boolean c64Mode;
 };
 
+//! \brief Program configuration instance
 EepromData configuration;
 
 //! \brief Custom controller configuration currently selected
@@ -431,6 +432,15 @@ void mapJoystickNormal (TwoButtonJoystick& j);
 
 //! \brief Joystick mapping function currently in effect
 JoyMappingFunc joyMappingFunc = mapJoystickNormal;
+
+/** \brief Time button mapping was last changed
+ *
+ * This is used so that we can wait a bit before storing the new mapping to
+ * EEPROM, to avoid wearing it out.
+ *
+ * It it also set when C64 mode is toggled.
+ */
+unsigned long mappingChangedTime = 0;
 
 //! @}		// End of global variables
 
@@ -836,10 +846,11 @@ inline void disableCD32Trigger () {
  */
 void clearConfiguration () {
 	debugln (F("Clearing configuration"));
+	ControllerConfiguration *controllerConfigs = configuration.controllerConfigs;
 	//~ memset (controllerConfigs, 0x00, sizeof (controllerConfigs));
 	for (byte i = 0; i < PSX_BUTTONS_NO; ++i) {
-		ControllerConfiguration& config = configuration.controllerConfigs[i];
-		memset (&config, 0x00, sizeof (TwoButtonJoystick));
+		ControllerConfiguration& config = controllerConfigs[i];
+		memset (&config, 0x00, sizeof (ControllerConfiguration));
 		config.buttonMappings[psxButtonToIndex (PSB_SQUARE)].b1 = true;
 		config.buttonMappings[psxButtonToIndex (PSB_CROSS)].b2 = true;
 	}
@@ -932,6 +943,10 @@ void applyConfiguration () {
 		} default:
 			// Do nothing
 			break;
+	}
+
+	if (configuration.c64Mode) {
+		debugln (F("C64 mode is active"));
 	}
 }
 
@@ -1804,15 +1819,22 @@ void stateMachine () {
 			}
 			break;
 		case ST_FIRST_READ:
+			if (stateEnteredTime == 0) {
+				// State was just entered
+				stateEnteredTime = millis ();
+			} 
+
 			if (ps2x.Button (PSB_SELECT)) {
 #ifndef DISABLE_FACTORY_RESET
 				/* The controller was plugged in (or the adapter was powered on)
 				 * with SELECT held, so the user wants to do a factory reset
 				 */
 				debugln (F("SELECT pressed at power-up, starting factory reset"));
+				stateEnteredTime = 0;
 				*state = ST_FACTORY_RESET_WAIT_1;
 #endif
-			} else {
+			} else if (millis () - stateEnteredTime > 300) {
+				stateEnteredTime = 0;
 				*state = ST_JOYSTICK;
 			}
 			break;
@@ -1905,11 +1927,14 @@ void stateMachine () {
 				*state = ST_SELECT_AND_BTN_HELD;
 			} else if (ps2x.Button (PSB_START)) {
 				if (configuration.c64Mode) {
+					debugln (F("C64 mode disabled"));
 					flashLed (2);
 				} else {
+					debugln (F("C64 mode enabled"));
 					flashLed (1);
 				}
 				configuration.c64Mode = !configuration.c64Mode;
+				mappingChangedTime = millis ();
 				*state = ST_WAIT_SELECT_RELEASE_FOR_EXIT;
 			}
 			break;
@@ -1974,7 +1999,8 @@ void stateMachine () {
 					break;
 			}
 			configuration.currentCustomConfigNo = selectComboButton;
-			*state = ST_JOYSTICK;		// Exit immediately
+			mappingChangedTime = millis ();
+			*state = ST_JOYSTICK;
 			break;
 		
 		/**********************************************************************
@@ -2150,6 +2176,11 @@ void updateLeds () {
 void loop () {
 	stateMachine ();
 	updateLeds ();
+
+	if (mappingChangedTime > 0 && millis () - mappingChangedTime >= 3000UL) {
+		saveConfiguration ();
+		mappingChangedTime = 0;
+	}
 
 #ifdef ENABLE_DEBUG_LOOP_DURATION
 	static unsigned long lastMillis = 0;
